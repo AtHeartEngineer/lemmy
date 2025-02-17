@@ -3,12 +3,14 @@ use chrono::{DateTime, Utc};
 use diesel::{
   deserialize::FromSqlRow,
   dsl::exists,
+
   dsl::Nullable,
   expression::AsExpression,
   sql_types,
   BoolExpressionMethods,
   ExpressionMethods,
   NullableExpressionMethods,
+  PgExpressionMethods,
   QueryDsl,
   Queryable,
   Selectable,
@@ -73,9 +75,11 @@ use lemmy_db_schema::{
 };
 #[cfg(feature = "full")]
 use lemmy_db_schema::{
-  aliases::{creator_community_actions, person1},
+  aliases::{creator_community_actions, creator_local_user, person1},
+  impls::comment::comment_select_remove_deletes,
+  impls::community::community_follower_select_subscribed_type,
+  impls::local_user::local_user_can_mod,
   schema::{comment, comment_actions, community_actions, local_user, person, person_actions},
-  source::community::CommunityFollower,
   utils::functions::coalesce,
   Person1AliasAllColumnsTuple,
 };
@@ -103,7 +107,9 @@ pub struct CommentReportView {
   pub creator_is_admin: bool,
   pub creator_blocked: bool,
   pub subscribed: SubscribedType,
-  pub saved: bool,
+  #[cfg_attr(feature = "full", ts(optional))]
+  /// The time when the comment was saved.
+  pub saved: Option<DateTime<Utc>>,
   #[cfg_attr(feature = "full", ts(optional))]
   pub my_vote: Option<i16>,
   #[cfg_attr(feature = "full", ts(optional))]
@@ -117,7 +123,11 @@ pub struct CommentReportView {
 #[cfg_attr(feature = "full", ts(export))]
 /// A comment view.
 pub struct CommentView {
-  #[cfg_attr(feature = "full", diesel(embed))]
+  #[cfg_attr(feature = "full",
+    diesel(
+      select_expression = comment_select_remove_deletes()
+    )
+  )]
   pub comment: Comment,
   #[cfg_attr(feature = "full", diesel(embed))]
   pub creator: Person,
@@ -157,21 +167,17 @@ pub struct CommentView {
   #[cfg_attr(feature = "full",
     diesel(
       select_expression =
-        exists(
-          local_user::table.filter(
-            comment::creator_id
-              .eq(local_user::person_id)
-              .and(local_user::admin.eq(true))
-          )
-        )
+        exists(creator_local_user.filter(
+          comment::creator_id
+            .eq(creator_local_user.field(local_user::person_id))
+            .and(creator_local_user.field(local_user::admin).eq(true)),
+        ))
     )
   )]
   pub creator_is_admin: bool,
   #[cfg_attr(feature = "full",
     diesel(
-      select_expression_type = Nullable<community_actions::follow_state>,
-      select_expression =
-        CommunityFollower::select_subscribed_type(),
+      select_expression = community_follower_select_subscribed_type(),
     )
   )]
   pub subscribed: SubscribedType,
@@ -182,6 +188,7 @@ pub struct CommentView {
         comment_actions::saved.nullable()
     )
   )]
+  /// The time when the comment was saved.
   pub saved: Option<DateTime<Utc>>,
   #[cfg_attr(feature = "full",
     diesel(
@@ -198,6 +205,12 @@ pub struct CommentView {
     )
   )]
   pub my_vote: Option<i16>,
+  #[cfg_attr(feature = "full",
+    diesel(
+      select_expression = local_user_can_mod()
+    )
+  )]
+  pub can_mod: bool,
 }
 
 #[skip_serializing_none]
@@ -215,10 +228,13 @@ pub struct CommentSlimView {
   pub creator_is_moderator: bool,
   pub creator_is_admin: bool,
   pub subscribed: SubscribedType,
-  pub saved: bool,
+  #[cfg_attr(feature = "full", ts(optional))]
+  /// The time when the comment was saved.
+  pub saved: Option<DateTime<Utc>>,
   pub creator_blocked: bool,
   #[cfg_attr(feature = "full", ts(optional))]
   pub my_vote: Option<i16>,
+  pub can_mod: bool,
 }
 
 #[skip_serializing_none]
@@ -269,7 +285,9 @@ pub struct PostReportView {
   pub creator_is_moderator: bool,
   pub creator_is_admin: bool,
   pub subscribed: SubscribedType,
-  pub saved: bool,
+  #[cfg_attr(feature = "full", ts(optional))]
+  /// The time when the post was saved.
+  pub saved: Option<DateTime<Utc>>,
   pub read: bool,
   pub hidden: bool,
   pub creator_blocked: bool,
@@ -327,6 +345,7 @@ pub struct PostView {
   pub counts: PostAggregates,
   pub subscribed: SubscribedType,
   #[cfg_attr(feature = "full", ts(optional))]
+  /// The time when the post was saved.
   pub saved: Option<DateTime<Utc>>,
   pub read: bool,
   pub hidden: bool,
@@ -335,6 +354,7 @@ pub struct PostView {
   pub my_vote: Option<i16>,
   pub unread_comments: i64,
   pub tags: PostTags,
+  pub can_mod: bool,
 }
 
 #[skip_serializing_none]
@@ -436,7 +456,7 @@ pub struct ReportCombinedViewInternal {
   pub post: Option<Post>,
   pub post_counts: Option<PostAggregates>,
   pub post_unread_comments: Option<i64>,
-  pub post_saved: bool,
+  pub post_saved: Option<DateTime<Utc>>,
   pub post_read: bool,
   pub post_hidden: bool,
   pub my_post_vote: Option<i16>,
@@ -444,7 +464,7 @@ pub struct ReportCombinedViewInternal {
   pub comment_report: Option<CommentReport>,
   pub comment: Option<Comment>,
   pub comment_counts: Option<CommentAggregates>,
-  pub comment_saved: bool,
+  pub comment_saved: Option<DateTime<Utc>>,
   pub my_comment_vote: Option<i16>,
   // Private-message-specific
   pub private_message_report: Option<PrivateMessageReport>,
@@ -505,6 +525,7 @@ pub(crate) struct PersonContentCombinedViewInternal {
   pub item_creator_banned_from_community: bool,
   pub item_creator_blocked: bool,
   pub banned_from_community: bool,
+  pub can_mod: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -562,8 +583,7 @@ pub struct CommunityView {
   pub community: Community,
   #[cfg_attr(feature = "full",
     diesel(
-      select_expression_type = Nullable<community_actions::follow_state>,
-      select_expression = CommunityFollower::select_subscribed_type()
+      select_expression = community_follower_select_subscribed_type()
     )
   )]
   pub subscribed: SubscribedType,
@@ -581,6 +601,14 @@ pub struct CommunityView {
     )
   )]
   pub banned_from_community: bool,
+  #[cfg_attr(feature = "full",
+    diesel(
+      select_expression = local_user::admin.nullable()
+        .or(community_actions::became_moderator.nullable().is_not_null())
+        .is_not_distinct_from(true)
+    )
+  )]
+  pub can_mod: bool,
 }
 
 /// The community sort types. See here for descriptions: https://join-lemmy.org/docs/en/users/03-votes-and-ranking.html
@@ -623,10 +651,13 @@ pub struct PersonCommentMentionView {
   pub creator_is_moderator: bool,
   pub creator_is_admin: bool,
   pub subscribed: SubscribedType,
-  pub saved: bool,
+  #[cfg_attr(feature = "full", ts(optional))]
+  /// The time when the comment was saved.
+  pub saved: Option<DateTime<Utc>>,
   pub creator_blocked: bool,
   #[cfg_attr(feature = "full", ts(optional))]
   pub my_vote: Option<i16>,
+  pub can_mod: bool,
 }
 
 #[skip_serializing_none]
@@ -649,7 +680,9 @@ pub struct PersonPostMentionView {
   pub creator_is_moderator: bool,
   pub creator_is_admin: bool,
   pub subscribed: SubscribedType,
-  pub saved: bool,
+  #[cfg_attr(feature = "full", ts(optional))]
+  /// The time when the post was saved.
+  pub saved: Option<DateTime<Utc>>,
   pub read: bool,
   pub hidden: bool,
   pub creator_blocked: bool,
@@ -657,6 +690,7 @@ pub struct PersonPostMentionView {
   pub my_vote: Option<i16>,
   pub unread_comments: i64,
   pub post_tags: PostTags,
+  pub can_mod: bool,
 }
 
 #[skip_serializing_none]
@@ -678,10 +712,13 @@ pub struct CommentReplyView {
   pub creator_is_moderator: bool,
   pub creator_is_admin: bool,
   pub subscribed: SubscribedType,
-  pub saved: bool,
+  #[cfg_attr(feature = "full", ts(optional))]
+  /// The time when the comment was saved.
+  pub saved: Option<DateTime<Utc>>,
   pub creator_blocked: bool,
   #[cfg_attr(feature = "full", ts(optional))]
   pub my_vote: Option<i16>,
+  pub can_mod: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -752,7 +789,7 @@ pub struct InboxCombinedViewInternal {
   pub person_post_mention: Option<PersonPostMention>,
   pub post_counts: Option<PostAggregates>,
   pub post_unread_comments: Option<i64>,
-  pub post_saved: bool,
+  pub post_saved: Option<DateTime<Utc>>,
   pub post_read: bool,
   pub post_hidden: bool,
   pub my_post_vote: Option<i16>,
@@ -765,7 +802,7 @@ pub struct InboxCombinedViewInternal {
   pub community: Option<Community>,
   pub comment: Option<Comment>,
   pub comment_counts: Option<CommentAggregates>,
-  pub comment_saved: bool,
+  pub comment_saved: Option<DateTime<Utc>>,
   pub my_comment_vote: Option<i16>,
   pub subscribed: SubscribedType,
   pub item_creator: Person,
@@ -775,6 +812,7 @@ pub struct InboxCombinedViewInternal {
   pub item_creator_banned_from_community: bool,
   pub item_creator_blocked: bool,
   pub banned_from_community: bool,
+  pub can_mod: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -1153,6 +1191,7 @@ pub(crate) struct SearchCombinedViewInternal {
   pub item_creator_banned_from_community: bool,
   pub item_creator_blocked: bool,
   pub banned_from_community: bool,
+  pub can_mod: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]

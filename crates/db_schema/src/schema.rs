@@ -179,6 +179,7 @@ diesel::table! {
         resolver_id -> Nullable<Int4>,
         published -> Timestamptz,
         updated -> Nullable<Timestamptz>,
+        violates_instance_rules -> Bool,
     }
 }
 
@@ -199,7 +200,7 @@ diesel::table! {
         deleted -> Bool,
         nsfw -> Bool,
         #[max_length = 255]
-        actor_id -> Varchar,
+        ap_id -> Varchar,
         local -> Bool,
         private_key -> Nullable<Text>,
         public_key -> Text,
@@ -252,11 +253,11 @@ diesel::table! {
         users_active_week -> Int8,
         users_active_month -> Int8,
         users_active_half_year -> Int8,
-        interactions_month -> Int8,
         hot_rank -> Float8,
         subscribers_local -> Int8,
         report_count -> Int2,
         unresolved_report_count -> Int2,
+        interactions_month -> Int8,
     }
 }
 
@@ -350,6 +351,8 @@ diesel::table! {
         width -> Int4,
         height -> Int4,
         content_type -> Text,
+        #[max_length = 50]
+        blurhash -> Nullable<Varchar>,
     }
 }
 
@@ -445,6 +448,7 @@ diesel::table! {
         comment_upvotes -> FederationModeEnum,
         comment_downvotes -> FederationModeEnum,
         disable_donation_dialog -> Bool,
+        default_post_time_range_seconds -> Nullable<Int4>,
     }
 }
 
@@ -518,6 +522,7 @@ diesel::table! {
         auto_mark_fetched_posts_as_read -> Bool,
         last_donation_notification -> Timestamptz,
         hide_media -> Bool,
+        default_post_time_range_seconds -> Nullable<Int4>,
     }
 }
 
@@ -745,7 +750,7 @@ diesel::table! {
         published -> Timestamptz,
         updated -> Nullable<Timestamptz>,
         #[max_length = 255]
-        actor_id -> Varchar,
+        ap_id -> Varchar,
         bio -> Nullable<Text>,
         local -> Bool,
         private_key -> Nullable<Text>,
@@ -779,6 +784,7 @@ diesel::table! {
         post_score -> Int8,
         comment_count -> Int8,
         comment_score -> Int8,
+        published -> Timestamptz,
     }
 }
 
@@ -912,6 +918,7 @@ diesel::table! {
         resolver_id -> Nullable<Int4>,
         published -> Timestamptz,
         updated -> Nullable<Timestamptz>,
+        violates_instance_rules -> Bool,
     }
 }
 
@@ -943,6 +950,7 @@ diesel::table! {
         #[max_length = 255]
         ap_id -> Varchar,
         local -> Bool,
+        removed -> Bool,
     }
 }
 
@@ -1046,7 +1054,7 @@ diesel::table! {
         #[max_length = 150]
         description -> Nullable<Varchar>,
         #[max_length = 255]
-        actor_id -> Varchar,
+        ap_id -> Varchar,
         last_refreshed_at -> Timestamptz,
         #[max_length = 255]
         inbox_url -> Varchar,

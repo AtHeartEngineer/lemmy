@@ -1,4 +1,5 @@
 use crate::{
+  aliases::creator_community_actions,
   newtypes::{CommunityId, DbUrl, LanguageId, LocalUserId, PersonId},
   schema::{community, community_actions, local_user, person, registration_application},
   source::{
@@ -19,13 +20,19 @@ use bcrypt::{hash, DEFAULT_COST};
 use diesel::{
   dsl::{insert_into, not, IntervalDsl},
   result::Error,
+  BoolExpressionMethods,
   CombineDsl,
   ExpressionMethods,
   JoinOnDsl,
+  NullableExpressionMethods,
+  PgExpressionMethods,
   QueryDsl,
 };
 use diesel_async::RunQueryDsl;
-use lemmy_utils::error::{LemmyErrorExt, LemmyErrorType, LemmyResult};
+use lemmy_utils::{
+  email::{lang_str_to_lang, translations::Lang},
+  error::{LemmyErrorExt, LemmyErrorType, LemmyResult},
+};
 
 impl LocalUser {
   pub async fn create(
@@ -171,7 +178,7 @@ impl LocalUser {
       .filter(community_actions::followed.is_not_null())
       .filter(community_actions::person_id.eq(person_id_))
       .inner_join(community::table)
-      .select(community::actor_id)
+      .select(community::ap_id)
       .get_results(conn)
       .await?;
 
@@ -195,7 +202,7 @@ impl LocalUser {
       .filter(community_actions::blocked.is_not_null())
       .filter(community_actions::person_id.eq(person_id_))
       .inner_join(community::table)
-      .select(community::actor_id)
+      .select(community::ap_id)
       .get_results(conn)
       .await?;
 
@@ -203,7 +210,7 @@ impl LocalUser {
       .filter(person_actions::blocked.is_not_null())
       .filter(person_actions::person_id.eq(person_id_))
       .inner_join(person::table.on(person_actions::target_id.eq(person::id)))
-      .select(person::actor_id)
+      .select(person::ap_id)
       .get_results(conn)
       .await?;
 
@@ -293,6 +300,33 @@ impl LocalUser {
       Err(LemmyErrorType::NotHigherMod)?
     }
   }
+
+  pub fn interface_i18n_language(&self) -> Lang {
+    lang_str_to_lang(&self.interface_language)
+  }
+}
+
+// TODO
+// I'd really like to have these on the impl, but unfortunately they have to be top level,
+// according to https://diesel.rs/guides/composing-applications.html
+/// Checks to see if you can mod an item.
+///
+/// Caveat: Since admin status isn't federated or ordered, it can't know whether
+/// item creator is a federated admin, or a higher admin.
+/// The back-end will reject an action for admin that is higher via
+/// LocalUser::is_higher_mod_or_admin_check
+#[diesel::dsl::auto_type]
+pub fn local_user_can_mod() -> _ {
+  let am_admin = local_user::admin.nullable();
+  let creator_became_moderator = creator_community_actions
+    .field(community_actions::became_moderator)
+    .nullable();
+
+  let am_higher_mod = community_actions::became_moderator
+    .nullable()
+    .le(creator_became_moderator);
+
+  am_admin.or(am_higher_mod).is_not_distinct_from(true)
 }
 
 /// Adds some helper functions for an optional LocalUser

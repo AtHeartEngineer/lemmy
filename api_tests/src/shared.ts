@@ -83,6 +83,7 @@ import { GetPosts } from "lemmy-js-client/dist/types/GetPosts";
 import { GetPersonDetailsResponse } from "lemmy-js-client/dist/types/GetPersonDetailsResponse";
 import { GetPersonDetails } from "lemmy-js-client/dist/types/GetPersonDetails";
 import { ListingType } from "lemmy-js-client/dist/types/ListingType";
+import { GetCommunityPendingFollowsCountI } from "lemmy-js-client/dist/other_types";
 
 export const fetchFunction = fetch;
 export const imageFetchLimit = 50;
@@ -800,8 +801,9 @@ export async function reportPost(
 
 export async function listReports(
   api: LemmyHttp,
+  show_community_rule_violations: boolean = false,
 ): Promise<ListReportsResponse> {
-  let form: ListReports = {};
+  let form: ListReports = { show_community_rule_violations };
   return api.listReports(form);
 }
 
@@ -882,7 +884,8 @@ export function getCommunityPendingFollowsCount(
   api: LemmyHttp,
   community_id: CommunityId,
 ): Promise<GetCommunityPendingFollowsCountResponse> {
-  return api.getCommunityPendingFollowsCount(community_id);
+  let form: GetCommunityPendingFollowsCountI = { community_id };
+  return api.getCommunityPendingFollowsCount(form);
 }
 
 export function approveCommunityPendingFollow(

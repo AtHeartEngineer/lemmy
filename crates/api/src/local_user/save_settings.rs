@@ -19,7 +19,7 @@ use lemmy_db_schema::{
     person::{Person, PersonUpdateForm},
   },
   traits::Crud,
-  utils::diesel_string_update,
+  utils::{diesel_opt_number_update, diesel_string_update},
 };
 use lemmy_db_views::structs::{LocalUserView, SiteView};
 use lemmy_utils::{
@@ -54,7 +54,9 @@ pub async fn save_user_settings(
     if previous_email.deref() != email {
       LocalUser::check_is_email_taken(&mut context.pool(), email).await?;
       send_verification_email(
-        &local_user_view,
+        &site_view.local_site,
+        &local_user_view.local_user,
+        &local_user_view.person,
         email,
         &mut context.pool(),
         context.settings(),
@@ -90,6 +92,8 @@ pub async fn save_user_settings(
   let person_id = local_user_view.person.id;
   let default_listing_type = data.default_listing_type;
   let default_post_sort_type = data.default_post_sort_type;
+  let default_post_time_range_seconds =
+    diesel_opt_number_update(data.default_post_time_range_seconds);
   let default_comment_sort_type = data.default_comment_sort_type;
 
   let person_form = PersonUpdateForm {
@@ -119,6 +123,7 @@ pub async fn save_user_settings(
     blur_nsfw: data.blur_nsfw,
     show_bot_accounts: data.show_bot_accounts,
     default_post_sort_type,
+    default_post_time_range_seconds,
     default_comment_sort_type,
     default_listing_type,
     theme: data.theme.clone(),
